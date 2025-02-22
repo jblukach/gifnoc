@@ -9,8 +9,11 @@ from aws_cdk import (
     Stack,
     aws_iam as _iam,
     aws_lambda as _lambda,
+    aws_lambda_event_sources as _eventsource,
     aws_logs as _logs,
-    aws_sns as _sns
+    aws_s3 as _s3,
+    aws_s3_notifications as _notifications,
+    aws_sqs as _sqs
 )
 
 from constructs import Construct
@@ -20,28 +23,69 @@ class GifnocStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        accountnumber = cdk.CfnParameter(
+        inputbucketname = cdk.CfnParameter(
             self,
-            'accountnumber',
-            default = '############',
+            'inputbucketname',
+            default = '<input>',
             type = 'String',
-            description = 'Provide Account Number'
+            description = 'Input Bucket Name'
         )
 
-        regionsyntax = cdk.CfnParameter(
+        outputbucketname = cdk.CfnParameter(
             self,
-            'regionsyntax',
-            default = 'us-east-2',
+            'ouputbucketname',
+            default = '<output>',
             type = 'String',
-            description = 'Provide Region Syntax'
+            description = 'Output Bucket Name'
         )
 
-    ### SNS TOPIC ###
+    ### S3 BUCKETS ###
 
-        topic = _sns.Topic.from_topic_arn(
-            self, 'topic',
-            topic_arn = 'arn:aws:sns:'+regionsyntax.value_as_string+':'+accountnumber.value_as_string+':aws-controltower-AllConfigNotifications'
+        inputbucket = _s3.Bucket.from_bucket_name(
+            self, 'inputbucket',
+            bucket_name = inputbucketname.value_as_string
         )
+
+        outputbucket = _s3.Bucket.from_bucket_name(
+            self, 'outputbucket',
+            bucket_name = outputbucketname.value_as_string
+        )
+
+    ### SQS QUEUE ###
+
+        queue = _sqs.Queue(
+            self, 'queue',
+            visibility_timeout = Duration.seconds(900)
+        )
+
+    ### RESOURCE POLICY ###
+
+        resource = _iam.PolicyStatement(
+            actions = [
+                'sqs:SendMessage'
+            ],
+            resources = [
+                queue.queue_arn
+            ],
+            effect = _iam.Effect.ALLOW,
+            principals = [
+                _iam.ServicePrincipal('s3.amazonaws.com')
+            ],
+            conditions = {
+                'ArnLike': {
+                    'aws:SourceArn': inputbucket.bucket_arn
+                }
+            }
+        )
+
+        queue.add_to_resource_policy(resource)
+
+    ### S3 NOTIFICATION ###
+
+        #inputbucket.add_event_notification(
+        #    _s3.EventType.OBJECT_CREATED,
+        #    _notifications.SqsDestination(queue)
+        #)
 
     ### IAM ROLE ###
 
@@ -58,6 +102,28 @@ class GifnocStack(Stack):
             )
         )
 
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions = [
+                    's3:GetObject'
+                ],
+                resources = [
+                    inputbucket.arn_for_objects('*')
+                ]
+            )
+        )
+
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions = [
+                    's3:PutObject'
+                ],
+                resources = [
+                    outputbucket.arn_for_objects('*')
+                ]
+            )
+        )
+
     ### LAMBDA FUNCTION ####
 
         with open('gifnoc.py', encoding="utf8") as f:
@@ -70,11 +136,12 @@ class GifnocStack(Stack):
             code = _lambda.InlineCode(code),
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
-            timeout = Duration.seconds(30),
+            timeout = Duration.seconds(900),
             environment = dict(
-                PREFIX = 'logs'
+                INPUT = inputbucket.bucket_name,
+                OUTPUT = outputbucket.bucket_name
             ),
-            memory_size = 128,
+            memory_size = 512,
             role = role
         )
 
@@ -85,14 +152,11 @@ class GifnocStack(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
-    ### SUBSCRIPTION ###
+    ### LAMBDA EVENT SOURCE ###
 
-        subscription = _sns.Subscription(
-            self, 'subscription',
-            topic = topic,
-            endpoint = gifnoc.function_arn,
-            protocol = _sns.SubscriptionProtocol.LAMBDA
-        )
+        #gifnoc.add_event_source(
+        #    _eventsource.SqsEventSource(queue)
+        #)
 
 ### GIFNOC APPLICATION ###
 
