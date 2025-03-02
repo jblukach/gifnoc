@@ -26,7 +26,7 @@ class GifnocStack(Stack):
         inputbucketname = cdk.CfnParameter(
             self,
             'inputbucketname',
-            default = '<input>',
+            default = '<input-bucket-name>',
             type = 'String',
             description = 'Input Bucket Name'
         )
@@ -34,7 +34,7 @@ class GifnocStack(Stack):
         outputbucketname = cdk.CfnParameter(
             self,
             'ouputbucketname',
-            default = '<output>',
+            default = '<output-bucket-name>',
             type = 'String',
             description = 'Output Bucket Name'
         )
@@ -82,10 +82,10 @@ class GifnocStack(Stack):
 
     ### S3 NOTIFICATION ###
 
-        #inputbucket.add_event_notification(
-        #    _s3.EventType.OBJECT_CREATED,
-        #    _notifications.SqsDestination(queue)
-        #)
+        inputbucket.add_event_notification(
+            _s3.EventType.OBJECT_CREATED,
+            _notifications.SqsDestination(queue)
+        )
 
     ### IAM ROLE ###
 
@@ -124,6 +124,19 @@ class GifnocStack(Stack):
             )
         )
 
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions = [
+                    'kms:Decrypt',
+                    'kms:DescribeKey',
+                    'kms:GenerateDataKey'
+                ],
+                resources = [
+                   '*'
+                ]
+            )
+        )
+
     ### LAMBDA FUNCTION ####
 
         with open('gifnoc.py', encoding="utf8") as f:
@@ -154,9 +167,9 @@ class GifnocStack(Stack):
 
     ### LAMBDA EVENT SOURCE ###
 
-        #gifnoc.add_event_source(
-        #    _eventsource.SqsEventSource(queue)
-        #)
+        gifnoc.add_event_source(
+            _eventsource.SqsEventSource(queue)
+        )
 
 ### GIFNOC APPLICATION ###
 

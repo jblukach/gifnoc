@@ -1,0 +1,151 @@
+Parameters:
+  inputbucketname:
+    Type: String
+    Default: <input-bucket-name>
+    Description: Input Bucket Name
+  ouputbucketname:
+    Type: String
+    Default: <output-bucket-name>
+    Description: Output Bucket Name
+Resources:
+  roleC7B7E775:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: GitHub
+          Value: https://github.com/jblukach/gifnoc
+  roleDefaultPolicy7C980EBA:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: s3:GetObject
+            Effect: Allow
+            Resource:
+              Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - Ref: inputbucketname
+                  - /*
+          - Action: s3:PutObject
+            Effect: Allow
+            Resource:
+              Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - Ref: ouputbucketname
+                  - /*
+          - Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:GenerateDataKey
+            Effect: Allow
+            Resource: "*"
+        Version: "2012-10-17"
+      PolicyName: roleDefaultPolicy7C980EBA
+      Roles:
+        - Ref: roleC7B7E775
+  gifnoc64E13FCE:
+    Type: AWS::Lambda::Function
+    Properties:
+      Architectures:
+        - arm64
+      Code:
+        ZipFile: |-
+          import boto3
+          import gzip
+          import json
+          import os
+
+          def handler(event, context):
+
+              s3 = boto3.client('s3')
+
+              for records in event['Records']:
+                  j = json.loads(records['body'])
+                  for record in j['Records']:
+                      print(record['s3']['object']['key'])
+
+                      if 'ConfigHistory' in record['s3']['object']['key']:
+                          s3.download_file(os.environ['INPUT'], record['s3']['object']['key'], '/tmp/temp.json.gz')
+                          with gzip.open('/tmp/temp.json.gz', 'rb') as f:
+                              content = f.read().decode('utf-8')
+                          f.close()
+                          with gzip.open('/tmp/hold.json.gz', 'wb') as g:
+                              j = json.loads(content)
+                              for item in j['configurationItems']:
+                                  temp = {}
+                                  temp['fileVersion'] = j['fileVersion']
+                                  temp['configurationItem'] = item
+                                  g.write((str(temp)+str('\n')).encode())
+                          g.close()
+                          s3.upload_file('/tmp/hold.json.gz', os.environ['OUTPUT'], record['s3']['object']['key'])
+
+                      if 'ConfigSnapshot' in record['s3']['object']['key']:
+                          s3.download_file(os.environ['INPUT'], record['s3']['object']['key'], '/tmp/temp.json.gz')
+                          with gzip.open('/tmp/temp.json.gz', 'rb') as f:
+                              content = f.read().decode('utf-8')
+                          f.close()
+                          with gzip.open('/tmp/hold.json.gz', 'wb') as g:
+                              j = json.loads(content)
+                              for item in j['configurationItems']:
+                                  temp = {}
+                                  temp['fileVersion'] = j['fileVersion']
+                                  temp['configSnapshotId'] = j['configSnapshotId']
+                                  temp['configurationItem'] = item
+                                  g.write((str(temp)+str('\n')).encode())
+                          g.close()
+                          s3.upload_file('/tmp/hold.json.gz', os.environ['OUTPUT'], record['s3']['object']['key'])
+
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Shipped!')
+              }
+      Environment:
+        Variables:
+          INPUT:
+            Ref: inputbucketname
+          OUTPUT:
+            Ref: ouputbucketname
+      Handler: index.handler
+      MemorySize: 512
+      Role:
+        Fn::GetAtt:
+          - roleC7B7E775
+          - Arn
+      Runtime: python3.13
+      Tags:
+        - Key: GitHub
+          Value: https://github.com/jblukach/gifnoc
+      Timeout: 900
+    DependsOn:
+      - roleDefaultPolicy7C980EBA
+      - roleC7B7E775
+  logs0B6081B1:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Join:
+          - ""
+          - - /aws/lambda/
+            - Ref: gifnoc64E13FCE
+      RetentionInDays: 14
+      Tags:
+        - Key: GitHub
+          Value: https://github.com/jblukach/gifnoc
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
